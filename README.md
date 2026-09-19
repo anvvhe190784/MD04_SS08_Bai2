@@ -1,6 +1,6 @@
-# MD04_SS08_Bai1: Cài đặt Circuit Breaker cơ bản với Resilience4j
+# MD04_SS08: Microservices Circuit Breaker & Fallback Method (Resilience4j)
 
-Dự án Microservices mẫu minh họa cơ chế **Circuit Breaker** (Ngắt mạch khi sập nguồn) sử dụng **Spring Boot 3**, **Java 21**, **Gradle** và thư viện **Resilience4j**.
+Dự án Microservices mẫu minh họa cơ chế **Circuit Breaker** (Ngắt mạch khi sập nguồn) và **Fallback Method** (Phương án dự phòng) sử dụng **Spring Boot 3**, **Java 21**, **Gradle** và thư viện **Resilience4j**.
 
 ---
 
@@ -12,27 +12,29 @@ Hệ thống bao gồm 2 dịch vụ độc lập:
    - Endpoint: `GET /doctors/{doctorId}/schedule`
 
 2. **`appointment-service`** (Cổng `8083`):
-   - Tiếp nhận yêu cầu đặt lịch hẹn từ bệnh nhân.
-   - Gọi sang `doctor-service:8082` để xác thực lịch trực của bác sĩ trước khi tiến hành đặt lịch.
-   - Được bảo vệ bởi **Circuit Breaker** (`doctorServiceCB`). Khi `doctor-service` gặp sự cố hoặc sập nguồn, Circuit Breaker sẽ ngắt mạch ngay lập tức (OPEN), chuyển hướng sang hàm **Fallback** để phản hồi lập tức cho người dùng, tránh treo luồng (thread starvation / cascading failure).
+   - Tiếp nhận yêu cầu đặt lịch hẹn từ bệnh nhân (`POST /api/v1/appointments`).
+   - Gọi sang `doctor-service:8082` để kiểm tra lịch trực của bác sĩ trước khi tạo lịch hẹn.
+   - Tích hợp **Circuit Breaker** (`doctorServiceCB`) và **Fallback Method** (`getDoctorFallback`) bằng Resilience4j.
+   - Khi `doctor-service` gặp sự cố hoặc mạch `OPEN`, hệ thống tự động trả về đối tượng lỗi chuẩn `ApiResponseError` với HTTP status `503 Service Unavailable` thay vì báo lỗi 500 hoặc bị treo.
 
 ```
                       +-----------------------------+
-                      |   Client / Người dùng       |
+                      |   Client / Postman          |
                       +--------------+--------------+
                                      |
-                                     | (1) POST /appointments/book hoặc
-                                     |     GET /appointments/check-doctor/1
+                                     | POST /api/v1/appointments
+                                     | { "patientName": "...", "doctorId": 1, "reason": "..." }
                                      v
                  +---------------------------------------+
                  |       Appointment-Service (8083)      |
                  |                                       |
                  |      [Circuit Breaker: doctorServiceCB]|
                  |          - CLOSED / OPEN / HALF_OPEN  |
-                 |          - Fallback Handler           |
+                 |          - Fallback: getDoctorFallback|
+                 |            -> ApiResponseError (503)  |
                  +-------------------+-------------------+
-                                     | (2) Gọi REST API
-                     (Ngắt khi sập)  |     (Fail fast)
+                                     | 
+                     (Ngắt khi sập)  | Gọi REST API
                                      v
                  +---------------------------------------+
                  |         Doctor-Service (8082)         |
@@ -44,7 +46,7 @@ Hệ thống bao gồm 2 dịch vụ độc lập:
 
 ## 2. Cấu hình Circuit Breaker (`application.properties`)
 
-Cấu hình tại `appointment-service/src/main/resources/application.properties`:
+File cấu hình tại `appointment-service/src/main/resources/application.properties`:
 
 ```properties
 spring.application.name=appointment-service
@@ -71,20 +73,41 @@ logging.level.io.github.resilience4j=DEBUG
 logging.level.com.example.appointmentservice=INFO
 ```
 
-### Ý nghĩa các thông số:
-- **`failure-rate-threshold=50`**: Mạch sẽ ngắt (`OPEN`) nếu tỷ lệ cuộc gọi thất bại đạt từ 50% trở lên.
-- **`minimum-number-of-calls=5`**: Số lần gọi tối thiểu cần ghi nhận trong cửa sổ trượt trước khi tính toán tỷ lệ lỗi để quyết định ngắt mạch.
-- **`wait-duration-in-open-state=10s`**: Thời gian mạch giữ trạng thái `OPEN` trước khi chuyển sang `HALF_OPEN` để thăm dò dịch vụ đích đã hồi phục hay chưa.
-- **`permitted-number-of-calls-in-half-open-state=3`**: Số cuộc gọi thử nghiệm được phép đi qua khi ở trạng thái `HALF_OPEN`.
-- **`logging.level.io.github.resilience4j=DEBUG`**: Bật in log chi tiết trạng thái mạch và từng request.
+---
+
+## 3. Nội dung Bài tập 2: Fallback Method (Phương án dự phòng)
+
+### 3.1. DTO `ApiResponseError`
+Được trả về khi `doctor-service` gặp sự cố hoặc mạch ngắt:
+```java
+public class ApiResponseError {
+    private String message;
+    private int status;
+    private String error;
+    private String timestamp;
+}
+```
+
+### 3.2. Cài đặt Annotation & Hàm Fallback
+Trong `AppointmentService.java`:
+```java
+@CircuitBreaker(name = "doctorServiceCB", fallbackMethod = "getDoctorFallback")
+public Object checkDoctor(Long doctorId) {
+    String url = doctorServiceUrl + "/doctors/" + doctorId + "/schedule";
+    return restTemplate.getForObject(url, DoctorScheduleDto.class);
+}
+
+public ApiResponseError getDoctorFallback(Exception e) {
+    log.warn("[FALLBACK] getDoctorFallback duoc kich hoat: {}", e.getMessage());
+    return ApiResponseError.ofDoctorServiceError();
+}
+```
 
 ---
 
-## 3. Hướng dẫn chạy & Thực hành quan sát chuyển trạng thái mạch
+## 4. Hướng dẫn chạy & Thực hành
 
 ### Bước 1: Khởi động 2 dịch vụ
-
-Mở 2 cửa sổ terminal riêng biệt:
 
 - **Terminal 1: Khởi động Doctor-Service (8082)**
   ```powershell
@@ -98,18 +121,21 @@ Mở 2 cửa sổ terminal riêng biệt:
 
 ---
 
-### Bước 2: Kiểm tra khi hệ thống hoạt động bình thường (Mạch `CLOSED`)
+### Bước 2: Kiểm tra khi hệ thống bình thường (Doctor-Service hoạt động)
 
-Thực hiện gọi API kiểm tra lịch trực bác sĩ:
+Gửi request tạo lịch hẹn:
 ```powershell
-curl http://localhost:8083/appointments/check-doctor/1
+curl -X POST http://localhost:8083/api/v1/appointments `
+  -H "Content-Type: application/json" `
+  -d '{\"patientName\": \"Nguyễn Văn A\", \"doctorId\": 1, \"reason\": \"Đau bụng\"}'
 ```
-**Kết quả mong đợi:**
+
+**Kết quả nhận được (HTTP 200 OK):**
 ```json
 {
   "success": true,
-  "message": "Lay thong tin lich truc bac si thanh cong.",
-  "appointmentId": null,
+  "message": "Dat lich hen thanh cong cho benh nhan Nguyễn Văn A voi bac si Dr. Nguyen Van A",
+  "appointmentId": 4582,
   "doctorSchedule": {
     "doctorId": 1,
     "doctorName": "Dr. Nguyen Van A",
@@ -121,80 +147,68 @@ curl http://localhost:8083/appointments/check-doctor/1
 }
 ```
 
-Kiểm tra trạng thái mạch hiện tại:
+---
+
+### Bước 3: Kiểm tra Fallback khi Doctor-Service bị tắt (Bài tập 2)
+
+1. Tắt dịch vụ `doctor-service` (bấm `Ctrl + C` ở Terminal 1).
+2. Gửi request đặt lịch hẹn tới `appointment-service`:
 ```powershell
-curl http://localhost:8083/appointments/circuit-breaker-status
+curl -X POST http://localhost:8083/api/v1/appointments `
+  -H "Content-Type: application/json" `
+  -d '{\"patientName\": \"Nguyễn Văn A\", \"doctorId\": 1, \"reason\": \"Đau bụng\"}'
 ```
-Kết quả hiển thị: `"state": "CLOSED"`.
+
+**Kết quả nhận được (HTTP 503 Service Unavailable):**
+```json
+{
+  "message": "Hiện tại không thể kiểm tra thông tin bác sĩ, vui lòng thử lại sau vài giây",
+  "status": 503,
+  "error": "Doctor Service Error",
+  "timestamp": "2026-03-10T20:42:53.2542232"
+}
+```
+
+> **Nhận xét**: Client nhận được JSON lỗi chuẩn (status 503) và thông báo chuyên nghiệp kể cả khi hệ thống lõi đang gặp sự cố, hệ thống không bị crash hay trả về lỗi 500 không xác định.
 
 ---
 
-### Bước 3: Mô phỏng Doctor-Service sập nguồn (Tắt Service 8082)
+### Bước 4: Kiểm tra ngắt mạch Circuit Breaker (Bài tập 1)
 
-- Tại **Terminal 1** (nơi đang chạy `doctor-service`), bấm tổ hợp phím `Ctrl + C` để dừng dịch vụ.
-- Lúc này dịch vụ `doctor-service` đã bị sập hoàn toàn.
-
----
-
-### Bước 4: Gọi API đặt lịch 5 lần & Quan sát ngắt mạch (`CLOSED` -> `OPEN`)
-
-Thực hiện gọi API 5 lần liên tiếp:
+Thực hiện gọi API 5 lần liên tiếp khi `doctor-service` đang tắt:
 ```powershell
 1..5 | ForEach-Object {
-    Write-Host "--- Lan goi $_ ---"
-    curl http://localhost:8083/appointments/check-doctor/1
+    Write-Host "--- Lần gọi $_ ---"
+    curl -X POST http://localhost:8083/api/v1/appointments `
+      -H "Content-Type: application/json" `
+      -d '{\"patientName\": \"Nguyễn Văn A\", \"doctorId\": 1, \"reason\": \"Đau bụng\"}'
     Start-Sleep -Milliseconds 200
 }
 ```
 
-**Hiện tượng quan sát được:**
-1. **Tại các lần gọi 1 đến 4**:
-   - Cuộc gọi sang port 8082 bị từ chối kết nối (`ConnectException`).
-   - Hàm **Fallback** lập tức kích hoạt, trả về thông báo lỗi an toàn thay vì làm ứng dụng bị crash.
-2. **Sau lần gọi thứ 5**:
-   - Tổng số cuộc gọi đạt `minimum-number-of-calls=5` và tỷ lệ thất bại là 100% (> 50%).
-   - Terminal của `appointment-service` xuất hiện dòng log nổi bật:
-     ```text
-     ⚡⚡⚡ [CIRCUIT BREAKER: doctorServiceCB] CHUYEN TRANG THAI: CLOSED -> OPEN ⚡⚡⚡
-     ```
-3. **Từ lần gọi thứ 6 trở đi**:
-   - Mạch đang ở trạng thái `OPEN`.
-   - Hệ thống **ngắt kết nối ngay lập tức (fail-fast)** mà KHÔNG hề gửi request qua mạng, trả về fallback trong `0ms`.
-   - Kiểm tra endpoint trạng thái:
-     ```powershell
-     curl http://localhost:8083/appointments/circuit-breaker-status
-     ```
-     Trả về: `"state": "OPEN"`.
+Quan sát log của `appointment-service`:
+```text
+⚡⚡⚡ [CIRCUIT BREAKER: doctorServiceCB] CHUYEN TRANG THAI: CLOSED -> OPEN ⚡⚡⚡
+```
+Kiểm tra trạng thái mạch:
+```powershell
+curl http://localhost:8083/appointments/circuit-breaker-status
+```
+Kết quả hiển thị: `"state": "OPEN"`. Từ thời điểm này, mọi request đến lập tức được ngắt mạch và trả về Fallback ngay (0ms).
 
 ---
 
-### Bước 5: Chuyển sang `HALF_OPEN` và Phục hồi (`OPEN` -> `HALF_OPEN` -> `CLOSED`)
+## 5. Chạy Kiểm Thử Tự Động (Automated Testing)
 
-1. Chờ đủ **10 giây** (theo cấu hình `wait-duration-in-open-state=10s`).
-2. Khởi động lại `doctor-service` ở Terminal 1:
-   ```powershell
-   .\gradlew :doctor-service:bootRun
-   ```
-3. Gửi 1 request từ `appointment-service`:
-   - Mạch chuyển sang trạng thái `HALF_OPEN`.
-4. Gửi tiếp 3 request thành công (`permitted-number-of-calls-in-half-open-state=3`):
-   - Mạch ghi nhận dịch vụ đã phục hồi và chuyển lại trạng thái:
-     ```text
-     ⚡⚡⚡ [CIRCUIT BREAKER: doctorServiceCB] CHUYEN TRANG THAI: HALF_OPEN -> CLOSED ⚡⚡⚡
-     ```
-
----
-
-## 4. Chạy Kiểm Thử Tự Động (Automated Testing)
-
-Dự án đã được tích hợp sẵn bộ kiểm thử đơn vị & tích hợp với JUnit 5 & Mockito theo chuẩn TDD:
+Dự án đã tích hợp đầy đủ test suite cho cả 2 bài tập với JUnit 5 & MockMvc:
 ```powershell
 .\gradlew test
 ```
 Tất cả các ca kiểm thử:
-- Khởi tạo ban đầu mạch `CLOSED`.
-- Giữ `CLOSED` khi dịch vụ đích phản hồi tốt.
-- Tự động ngắt mạch sang `OPEN` sau đúng 5 lần lỗi liên tiếp.
-- Ngắt mạng tức thì (short-circuit) khi mạch `OPEN`.
-- Chuyển tiếp trạng thái sang `HALF_OPEN`.
-đều vượt qua 100% thành công.
+- `testFallbackWhenDoctorServiceIsDown`: Xác minh API trả về HTTP 503 và `ApiResponseError` đúng chuẩn đề bài.
+- `testDirectServiceFallbackMethod`: Xác minh hàm `getDoctorFallback(Exception e)` trả về đúng dữ liệu.
+- `testSuccessWhenDoctorServiceIsUp`: Xác minh luồng thành công khi service UP.
+- `testCircuitBreakerOpensAfterFiveFailures`: Xác minh chuyển trạng thái mạch `CLOSED -> OPEN` sau 5 lần lỗi.
+- `testHalfOpenTransition`: Xác minh chuyển đổi trạng thái sang `HALF_OPEN`.
+
+Kết quả: **100% Tests Passed**.

@@ -42,6 +42,21 @@ public class AppointmentService {
     }
 
     /**
+     * Bai tap 2: Ham checkDoctor voi fallbackMethod getDoctorFallback tra ve ApiResponseError
+     */
+    @io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker(name = DOCTOR_SERVICE_CB, fallbackMethod = "getDoctorFallback")
+    public Object checkDoctor(Long doctorId) {
+        String url = doctorServiceUrl + "/doctors/" + doctorId + "/schedule";
+        log.info("[Appointment-Service:Bai2] Goi sang Doctor-Service tai URL: {}", url);
+        return restTemplate.getForObject(url, DoctorScheduleDto.class);
+    }
+
+    public com.example.appointmentservice.dto.ApiResponseError getDoctorFallback(Exception e) {
+        log.warn("[FALLBACK:Bai2] getDoctorFallback(Exception) duoc kich hoat: {}", e.getMessage());
+        return com.example.appointmentservice.dto.ApiResponseError.ofDoctorServiceError();
+    }
+
+    /**
      * Ham Fallback duoc goi khi:
      * 1. Doctor-Service bi sap hoac throw Exception
      * 2. Circuit Breaker dang o trang thai OPEN (ngat mach)

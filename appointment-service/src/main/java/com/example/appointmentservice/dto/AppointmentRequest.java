@@ -5,6 +5,7 @@ public class AppointmentRequest {
     private String patientName;
     private String appointmentDate;
     private String notes;
+    private String reason;
 
     public AppointmentRequest() {
     }
@@ -14,6 +15,12 @@ public class AppointmentRequest {
         this.patientName = patientName;
         this.appointmentDate = appointmentDate;
         this.notes = notes;
+    }
+
+    public AppointmentRequest(Long doctorId, String patientName, String reason) {
+        this.doctorId = doctorId;
+        this.patientName = patientName;
+        this.reason = reason;
     }
 
     public Long getDoctorId() {
@@ -47,4 +54,13 @@ public class AppointmentRequest {
     public void setNotes(String notes) {
         this.notes = notes;
     }
+
+    public String getReason() {
+        return reason;
+    }
+
+    public void setReason(String reason) {
+        this.reason = reason;
+    }
 }
+

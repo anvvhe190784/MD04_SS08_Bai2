@@ -29,3 +29,4 @@ public class DoctorControllerTest {
                 .andExpect(jsonPath("$.available").value(true));
     }
 }
+

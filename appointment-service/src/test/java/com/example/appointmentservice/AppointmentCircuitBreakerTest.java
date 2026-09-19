@@ -100,3 +100,4 @@ public class AppointmentCircuitBreakerTest {
         assertEquals(CircuitBreaker.State.HALF_OPEN, circuitBreaker.getState());
     }
 }
+
