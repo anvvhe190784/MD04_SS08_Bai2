@@ -1,4 +1,4 @@
-rootProject.name = 'MD04_SS08_Bai1'
+rootProject.name = 'MD04_SS08_Bai2'
 include 'doctor-service'
 include 'appointment-service'
 
